@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from crypto_utils import HybridCrypto
 import threading
+import base64
 
 # Try to import tkinterdnd2 for drag-and-drop, fallback to click-based selection
 try:
@@ -209,6 +210,12 @@ class EncryptionGUI:
         )
         self.encrypt_file_btn.pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(
+            button_frame,
+            text="Encrypt as Text (Base64)",
+            command=self.encrypt_file_as_base64,
+        ).pack(side=tk.LEFT, padx=5)
+
     def build_encrypt_text_tab(self, parent):
         """Build the encrypt text tab."""
         frame = ttk.Frame(parent, padding=10)
@@ -320,6 +327,12 @@ class EncryptionGUI:
             command=self.decrypt_file,
         )
         self.decrypt_file_btn.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            button_frame,
+            text="Decrypt from Text (Base64)",
+            command=self.decrypt_file_from_base64,
+        ).pack(side=tk.LEFT, padx=5)
 
     def build_decrypt_text_tab(self, parent):
         """Build the decrypt text tab."""
@@ -607,7 +620,181 @@ class EncryptionGUI:
         thread = threading.Thread(target=encrypt, daemon=True)
         thread.start()
 
+    def encrypt_file_as_base64(self):
+        """Encrypt file and encode as Base64 text for messaging apps (WhatsApp, etc)."""
+        # Check if we have either local keys or imported public key
+        has_local_keys = self.crypto.keys_exist()
+        has_imported_key = hasattr(self, "_imported_public_key_path")
+
+        if not has_local_keys and not has_imported_key:
+            messagebox.showerror(
+                "Error",
+                "Please generate RSA keys first or import a public key",
+            )
+            return
+
+        if not hasattr(self, "_encrypt_file_path"):
+            messagebox.showerror("Error", "Please select a file to encrypt")
+            return
+
+        output_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=f"{Path(self._encrypt_file_path).name}.encrypted.txt",
+        )
+
+        if not output_path:
+            return
+
+        def encrypt():
+            self.encrypt_file_btn.config(state=tk.DISABLED)
+            self.set_status(f"Encrypting and converting to Base64...")
+            try:
+                import tempfile
+                
+                # Create temp encrypted file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".encrypted") as tmp:
+                    tmp_encrypted = tmp.name
+                
+                try:
+                    # Encrypt to temp file
+                    if has_imported_key:
+                        success = self.crypto.encrypt_file_with_public_key(
+                            self._encrypt_file_path, tmp_encrypted, self._imported_public_key_path
+                        )
+                    else:
+                        success = self.crypto.encrypt_file(self._encrypt_file_path, tmp_encrypted)
+                    
+                    if success:
+                        # Read encrypted file and encode to Base64
+                        with open(tmp_encrypted, "rb") as f:
+                            encrypted_data = f.read()
+                        
+                        encrypted_b64 = base64.b64encode(encrypted_data).decode("utf-8")
+                        
+                        # Save Base64 as text file
+                        with open(output_path, "w") as f:
+                            f.write(encrypted_b64)
+                        
+                        self.set_status(f"✓ File encrypted as text: {Path(output_path).name}")
+                        messagebox.showinfo(
+                            "Success",
+                            f"File encrypted and saved as Base64 text!\n\n"
+                            f"Can now be safely sent via WhatsApp, email, etc.\n\n{output_path}",
+                        )
+                    else:
+                        self.set_status("Encryption failed")
+                        messagebox.showerror("Error", "Failed to encrypt file")
+                finally:
+                    # Clean up temp file
+                    if os.path.exists(tmp_encrypted):
+                        os.remove(tmp_encrypted)
+            finally:
+                self.encrypt_file_btn.config(state=tk.NORMAL)
+
+        thread = threading.Thread(target=encrypt, daemon=True)
+        thread.start()
+
     def decrypt_file(self):
+        """Decrypt selected file in a separate thread."""
+        if not self.crypto.keys_exist():
+            messagebox.showerror("Error", "Please generate RSA keys first")
+            return
+
+        if not hasattr(self, "_decrypt_file_path"):
+            messagebox.showerror("Error", "Please select a file to decrypt")
+            return
+
+        output_path = filedialog.asksaveasfilename(
+            filetypes=[("All files", "*.*")],
+            initialfile=Path(self._decrypt_file_path).stem,
+        )
+
+        if not output_path:
+            return
+
+        def decrypt():
+            self.decrypt_file_btn.config(state=tk.DISABLED)
+            self.set_status(f"Decrypting {Path(self._decrypt_file_path).name}...")
+            try:
+                if self.crypto.decrypt_file(self._decrypt_file_path, output_path):
+                    self.set_status(f"✓ File decrypted: {Path(output_path).name}")
+                    messagebox.showinfo(
+                        "Success",
+                        f"File decrypted successfully!\n\n{output_path}",
+                    )
+                else:
+                    self.set_status("Decryption failed")
+                    messagebox.showerror("Error", "Failed to decrypt file")
+            finally:
+                self.decrypt_file_btn.config(state=tk.NORMAL)
+
+        thread = threading.Thread(target=decrypt, daemon=True)
+        thread.start()
+
+    def decrypt_file_from_base64(self):
+        """Decrypt file from Base64 text (received from messaging apps)."""
+        if not self.crypto.keys_exist():
+            messagebox.showerror("Error", "Please generate RSA keys first")
+            return
+
+        # Ask for Base64 file
+        base64_file = filedialog.askopenfilename(
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+
+        if not base64_file:
+            return
+
+        output_path = filedialog.asksaveasfilename(
+            filetypes=[("All files", "*.*")],
+        )
+
+        if not output_path:
+            return
+
+        def decrypt():
+            self.decrypt_file_btn.config(state=tk.DISABLED)
+            self.set_status("Decoding from Base64 and decrypting...")
+            try:
+                import tempfile
+                
+                # Read Base64 file
+                with open(base64_file, "r") as f:
+                    encrypted_b64 = f.read().strip()
+                
+                # Decode from Base64
+                encrypted_data = base64.b64decode(encrypted_b64)
+                
+                # Create temp encrypted file
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".encrypted") as tmp:
+                    tmp.write(encrypted_data)
+                    tmp_encrypted = tmp.name
+                
+                try:
+                    # Decrypt temp file
+                    if self.crypto.decrypt_file(tmp_encrypted, output_path):
+                        self.set_status(f"✓ File decrypted: {Path(output_path).name}")
+                        messagebox.showinfo(
+                            "Success",
+                            f"File decrypted successfully!\n\n{output_path}",
+                        )
+                    else:
+                        self.set_status("Decryption failed")
+                        messagebox.showerror("Error", "Failed to decrypt file")
+                finally:
+                    # Clean up temp file
+                    if os.path.exists(tmp_encrypted):
+                        os.remove(tmp_encrypted)
+            except Exception as e:
+                self.set_status("Error decoding Base64")
+                messagebox.showerror("Error", f"Invalid Base64 file: {str(e)}")
+            finally:
+                self.decrypt_file_btn.config(state=tk.NORMAL)
+
+        thread = threading.Thread(target=decrypt, daemon=True)
+        thread.start()
+
         """Decrypt selected file in a separate thread."""
         if not self.crypto.keys_exist():
             messagebox.showerror("Error", "Please generate RSA keys first")
