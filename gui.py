@@ -158,6 +158,12 @@ class EncryptionGUI:
         )
         self.import_btn.pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(
+            button_frame,
+            text="🔄 Setup Two-Way",
+            command=self.setup_two_way_encryption,
+        ).pack(side=tk.LEFT, padx=5)
+
         self.key_status_label = ttk.Label(
             button_frame, text="Keys: Not found", foreground=self.error_color
         )
@@ -508,6 +514,69 @@ class EncryptionGUI:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to import public key: {e}")
             self.set_status("Import failed")
+
+    def setup_two_way_encryption(self):
+        """Automate two-way encryption setup between two systems."""
+        def setup():
+            try:
+                # Step 1: Generate keys if needed
+                if not self.crypto.keys_exist():
+                    self.set_status("Generating RSA keys...")
+                    if not self.crypto.generate_rsa_keys():
+                        messagebox.showerror("Error", "Failed to generate keys")
+                        return
+                    self.check_keys()
+
+                # Step 2: Export public key to Desktop
+                desktop = Path.home() / "Desktop"
+                desktop.mkdir(exist_ok=True)
+                
+                export_path = desktop / f"public_key_{os.environ.get('USERNAME', 'user')}.pem"
+                self.set_status(f"Exporting public key to Desktop...")
+                
+                with open(self.crypto.public_key_path, "rb") as src:
+                    with open(export_path, "wb") as dst:
+                        dst.write(src.read())
+                
+                # Step 3: Ask user to import other system's public key
+                result = messagebox.showinfo(
+                    "Step 1 Complete ✓",
+                    f"Your public key exported to Desktop:\n\n{export_path}\n\n"
+                    f"1. Send this file to the other system\n"
+                    f"2. Click OK when you have their public key file\n\n"
+                    f"(You'll be asked to select their public key next)"
+                )
+                
+                # Step 4: Import other system's public key
+                self.set_status("Waiting for other system's public key...")
+                other_public_key = filedialog.askopenfilename(
+                    title="Select the other system's public key file",
+                    filetypes=[("PEM files", "*.pem"), ("All files", "*.*")],
+                )
+                
+                if other_public_key:
+                    self._imported_public_key_path = other_public_key
+                    self.set_status("✓ Two-way encryption setup complete!")
+                    
+                    messagebox.showinfo(
+                        "✓ Setup Complete!",
+                        f"Two-way encryption is now ready!\n\n"
+                        f"Your public key: {export_path}\n"
+                        f"Imported key: {Path(other_public_key).name}\n\n"
+                        f"You can now:\n"
+                        f"• Encrypt files for the other system\n"
+                        f"• Decrypt files from the other system"
+                    )
+                else:
+                    messagebox.showwarning("Incomplete", "Setup not completed. Import cancelled.")
+                    self.set_status("Two-way setup cancelled")
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Setup failed: {str(e)}")
+                self.set_status("Setup failed")
+        
+        thread = threading.Thread(target=setup, daemon=True)
+        thread.start()
 
     def on_encrypt_file_click(self, event):
         """Handle click on encrypt file drop area."""
