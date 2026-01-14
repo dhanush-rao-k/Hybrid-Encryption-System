@@ -763,8 +763,16 @@ class EncryptionGUI:
                 with open(base64_file, "r") as f:
                     encrypted_b64 = f.read().strip()
                 
+                # Remove any whitespace/newlines that might have been added
+                encrypted_b64 = ''.join(encrypted_b64.split())
+                
                 # Decode from Base64
-                encrypted_data = base64.b64decode(encrypted_b64)
+                try:
+                    encrypted_data = base64.b64decode(encrypted_b64, validate=True)
+                except Exception as decode_err:
+                    self.set_status("Error: Invalid Base64 format")
+                    messagebox.showerror("Error", f"Failed to decode Base64: {str(decode_err)}")
+                    return
                 
                 # Create temp encrypted file
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".encrypted") as tmp:
@@ -780,51 +788,15 @@ class EncryptionGUI:
                             f"File decrypted successfully!\n\n{output_path}",
                         )
                     else:
-                        self.set_status("Decryption failed")
-                        messagebox.showerror("Error", "Failed to decrypt file")
+                        self.set_status("Decryption failed - check private key")
+                        messagebox.showerror("Error", "Failed to decrypt file.\n\nPossible reasons:\n- Wrong file\n- Private key mismatch\n- File corruption")
                 finally:
                     # Clean up temp file
                     if os.path.exists(tmp_encrypted):
                         os.remove(tmp_encrypted)
             except Exception as e:
-                self.set_status("Error decoding Base64")
-                messagebox.showerror("Error", f"Invalid Base64 file: {str(e)}")
-            finally:
-                self.decrypt_file_btn.config(state=tk.NORMAL)
-
-        thread = threading.Thread(target=decrypt, daemon=True)
-        thread.start()
-
-        """Decrypt selected file in a separate thread."""
-        if not self.crypto.keys_exist():
-            messagebox.showerror("Error", "Please generate RSA keys first")
-            return
-
-        if not hasattr(self, "_decrypt_file_path"):
-            messagebox.showerror("Error", "Please select a file to decrypt")
-            return
-
-        output_path = filedialog.asksaveasfilename(
-            filetypes=[("All files", "*.*")],
-            initialfile=Path(self._decrypt_file_path).stem,
-        )
-
-        if not output_path:
-            return
-
-        def decrypt():
-            self.decrypt_file_btn.config(state=tk.DISABLED)
-            self.set_status(f"Decrypting {Path(self._decrypt_file_path).name}...")
-            try:
-                if self.crypto.decrypt_file(self._decrypt_file_path, output_path):
-                    self.set_status(f"✓ File decrypted: {Path(output_path).name}")
-                    messagebox.showinfo(
-                        "Success",
-                        f"File decrypted successfully!\n\n{output_path}",
-                    )
-                else:
-                    self.set_status("Decryption failed")
-                    messagebox.showerror("Error", "Failed to decrypt file")
+                self.set_status(f"Error: {str(e)}")
+                messagebox.showerror("Error", f"Decryption error: {str(e)}")
             finally:
                 self.decrypt_file_btn.config(state=tk.NORMAL)
 
